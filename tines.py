@@ -3,27 +3,12 @@ import json
 import requests
 import re
 
-class FormatValue():
-    def __format__(self, spec):
-        return ""
-    def __getitem__(self, name):
-        # handle further nested item access
-        return self
-
-class formatting_dict(dict):
-    def __getitem__(self, name):
-        value = self.get(name)
-		
-        if isinstance(value, dict):
-            # rewrap nested dictionaries to handle missing nested keys
-            value = type(self)(value)
-        return value if value is not None else FormatValue()
 
 def main():
 	# Parse predictor argument
 	arg_par = argparse.ArgumentParser()
 	arg_par.add_argument("-j", "--json", required=True,
-			help="path to facial json of actions")
+			help="path to json file")
 	args = vars(arg_par.parse_args())
 	tines(args)
 
@@ -33,9 +18,10 @@ def tines(args):
 		with open(args["json"], 'r') as f:
 			data = f.read()
 	except IOError as e:
-		print(e)
+		return "IOError. Error reading file."
 	except Exception as e:
 		print("Failed: ", e)
+		return
 
 	try:
 		obj = json.loads(data)
@@ -47,7 +33,6 @@ def tines(args):
 	for agent in obj["agents"]:
 		if agent["type"] == "HTTPRequestAgent":
 			http_request_agent(events, agent)
-			
 		elif agent["type"] == "PrintAgent":
 			print_agent(events, agent)
 
@@ -75,6 +60,7 @@ def http_request_agent(events, agent):
 		return
 	events[agent["name"]] = res_text
 
+
 def print_agent(events, agent):
 	message = agent["options"]["message"]
 	message = interpolate_option(events, message)
@@ -82,70 +68,47 @@ def print_agent(events, agent):
 	return
 
 
-def interpolate_option(events, str):
+def interpolate_option(events, option_str):
 	# Create array of values that are surrounded by '{{' '}}'
-	bracket_values = [p.split('}}')[0] for p in str.split('{{') if '}}' in p]
+	bracket_values = [p.split('}}')[0] for p in option_str.split('{{') if '}}' in p]
 
 	# If values are surrounded by brackets enter
 	if len(bracket_values) > 0:
 		converted_values = convert_dot_paran(bracket_values)
-		str = add_conv_back(converted_values, str)
+		option_str = add_conv_back(converted_values, option_str, events)
 
-		print("interpolate_option str: ", str)
-
-		# Use f strings to replace converted value with
-		str = str.format_map(formatting_dict(events))
-		
-		# Need to escape any left over double parantheses so that it 
-		# remains printed as is.
-		str = escape_brackets(str)
-
-	return str
+	return option_str
 
 
 def convert_dot_paran(bracket_values):
 	# Convert dot notation to parantheses
 	converted_values = []
 	for value in bracket_values:
-		value = value.replace(".", "[", 1)
-		value = value.replace(".", "][")
+		value = value.split(".")
 
-		converted_values.append(value + "]")
+		converted_values.append(value)
 	return converted_values
 
 
-def add_conv_back(converted_values, str):
+def add_conv_back(converted_values, option_str, events):
 	# Loop through converted_values and replace originals one at a time
+	# regex to find two starting brackets, anything inbetween, and two ending brackets.
 	regex = '\{{[^{]*?\}}'
 	for conv_value in converted_values:
+		# get value pair from events, if it exists.
+		temp = events
+		for key in conv_value:
+			try:
+				temp = temp[key]
+			except KeyError as ke:
+				# print("KeyError ke: ", ke)
+				temp = ""
+				break
+		temp = str(temp)
+
 		# Substitute first {{value}} with {conv_value}
-		str = re.sub(regex, "{" + conv_value + "}", str, 1)
-	return str
-
-
-def escape_brackets(str):
-	# Add extra starting/closing bracket to any group of one or more 
-	# starting/closing bracket
-	start_matches = []
-	def repl_start(m):
-		start_matches.append(m.group())
-		return ("{}{}").format(m.group(), "{")
-
-	close_matches = []
-	def repl_close(m):
-		close_matches.append(m.group())
-		return ("{}{}").format(m.group(), "}")
-
-	# Escape starting brackets
-	pattern = re.compile(r'\{{1,}')
-	str = re.sub(pattern, repl_start, str)
-
-	# Escape closing brackets
-	pattern = re.compile(r'\}{1,}')
-	str = re.sub(pattern, repl_close, str)
-
-	return str
-
+		option_str = re.sub(regex, temp, option_str, 1)
+	return option_str
 
 if __name__ == "__main__":
 	main()
